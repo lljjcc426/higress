@@ -1,0 +1,54 @@
+name: PR 5220 Envoy runtime verification
+on:
+  push:
+    branches: [verify/pr5220-runtime]
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          filter: blob:none
+          sparse-checkout: |
+            plugins/wasm-rust
+            verification
+      - name: Install pinned Rust and WASI C toolchain
+        run: |
+          rustup toolchain install 1.85.1 --profile minimal --target wasm32-wasip1
+          curl -fsSL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz | tar -xz -C "$RUNNER_TEMP"
+          echo "CC_wasm32_wasip1=$RUNNER_TEMP/wasi-sdk-25.0-x86_64-linux/bin/clang" >> "$GITHUB_ENV"
+          echo "AR_wasm32_wasip1=$RUNNER_TEMP/wasi-sdk-25.0-x86_64-linux/bin/llvm-ar" >> "$GITHUB_ENV"
+      - name: Build baseline and fixed modules
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/pr5220-build/source"
+          git fetch --filter=blob:none --depth=1 origin 57e2786849516cde6c71206e303f03aab364093e
+          git archive 57e2786849516cde6c71206e303f03aab364093e plugins/wasm-rust | tar -x -C "$RUNNER_TEMP/pr5220-build/source"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/pr5220-build/target"
+          rustc +1.85.1 --version | tee "$RUNNER_TEMP/pr5220-build/toolchains.txt"
+          "$CC_wasm32_wasip1" --version >> "$RUNNER_TEMP/pr5220-build/toolchains.txt"
+          cargo +1.85.1 build --locked --release --target wasm32-wasip1 --manifest-path "$RUNNER_TEMP/pr5220-build/source/plugins/wasm-rust/extensions/ai-data-masking/Cargo.toml" 2>&1 | tee "$RUNNER_TEMP/pr5220-build/baseline.log"
+          cp "$CARGO_TARGET_DIR/wasm32-wasip1/release/ai_data_masking.wasm" "$RUNNER_TEMP/pr5220-build/baseline.wasm"
+          cargo +1.85.1 build --locked --release --target wasm32-wasip1 --manifest-path plugins/wasm-rust/extensions/ai-data-masking/Cargo.toml 2>&1 | tee "$RUNNER_TEMP/pr5220-build/candidate.log"
+          cp "$CARGO_TARGET_DIR/wasm32-wasip1/release/ai_data_masking.wasm" "$RUNNER_TEMP/pr5220-build/candidate.wasm"
+      - name: Run the pinned Higress Envoy comparison
+        run: |
+          python3 verification/ai-data-masking-stream-denial/verify_runtime.py \
+            --baseline-wasm "$RUNNER_TEMP/pr5220-build/baseline.wasm" \
+            --candidate-wasm "$RUNNER_TEMP/pr5220-build/candidate.wasm" \
+            --baseline-source 57e2786849516cde6c71206e303f03aab364093e \
+            --candidate-source b89784f \
+            --output "$RUNNER_TEMP/pr5220-evidence" \
+            --resource-prefix "pr5220-${GITHUB_RUN_ID}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr5220-runtime-evidence
+          retention-days: 90
+          path: |
+            ${{ runner.temp }}/pr5220-evidence
+            ${{ runner.temp }}/pr5220-build/*.log
+            ${{ runner.temp }}/pr5220-build/toolchains.txt

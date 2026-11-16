@@ -40,7 +40,7 @@ jobs:
             --baseline-wasm "$RUNNER_TEMP/pr5220-build/baseline.wasm" \
             --candidate-wasm "$RUNNER_TEMP/pr5220-build/candidate.wasm" \
             --baseline-source 57e2786849516cde6c71206e303f03aab364093e \
-            --candidate-source b89784f \
+            --candidate-source 8bdd6852af0663d48744eb582d2ce08a494d1153 \
             --output "$RUNNER_TEMP/pr5220-evidence" \
             --resource-prefix "pr5220-${GITHUB_RUN_ID}"
       - uses: actions/upload-artifact@v4
